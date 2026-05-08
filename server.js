@@ -2,21 +2,26 @@
 const sqlite3 = require('sqlite3').verbose();
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// Database setup
-const dbDir = path.join(__dirname, 'data');
-const fs = require('fs');
-if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir);
+// Use a writable directory (Render's /tmp is writable, but ephemeral)
+const dbDir = process.env.DB_DIR || path.join(__dirname, 'data');
+if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 const dbPath = path.join(dbDir, 'inspections.db');
-const db = new sqlite3.Database(dbPath);
 
+// Use a persistent disk on Render (optional) – for free tier we use /tmp
+// but note: data will be lost on redeploy. For production, use a real database.
+// Use /tmp for free tier (ephemeral)
+const finalDbPath = process.env.NODE_ENV === 'production' ? '/tmp/inspections.db' : dbPath;
+
+const db = new sqlite3.Database(finalDbPath);
 db.run(`
   CREATE TABLE IF NOT EXISTS inspections (
     id TEXT PRIMARY KEY,
@@ -36,7 +41,6 @@ db.run(`
   )
 `);
 
-// Routes
 app.get('/inspections', (req, res) => {
   db.all('SELECT * FROM inspections ORDER BY timestamp DESC', (err, rows) => {
     if (err) {
@@ -79,7 +83,12 @@ app.delete('/inspections/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// Keep‑alive endpoint for cron jobs
+app.get('/ping', (req, res) => {
+  res.status(200).send('pong');
+});
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Sync server running on http://localhost:${PORT}`);
-  console.log(`To allow devices on same network, use your local IP: http://<YOUR_IP>:${PORT}`);
+  console.log(`Sync server running on port ${PORT}`);
+  console.log(`Database path: ${finalDbPath}`);
 });
